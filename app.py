@@ -8,12 +8,8 @@ st.set_page_config(page_title="ИИ Администратор SCP RP", page_ico
 st.title("⚖️ Интеллектуальный ИИ-Судья SCP RP")
 st.markdown("ИИ считывает правила из внешнего файла и выносит вердикт по игровой ситуации.")
 
-# Берем ключ из секретов Streamlit
-if "GEMINI_API_KEY" in st.secrets:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-else:
-    # Если в секретах забыли прописать, подставим твой ключ напрямую
-    GEMINI_API_KEY = "AQ.Ab8RN6KyaPJ6IU_M92DEi5hBgWpLmx1ZzuXXWAFUJL6iVFnlpQ"
+# Твой рабочий ключ нового формата
+GEMINI_API_KEY = "AQ.Ab8RN6KyaPJ6IU_M92DEi5hBgWpLmx1ZzuXXWAFUJL6iVFnlpQ"
 
 # Функция динамической загрузки правил из файла rules.txt
 def load_all_rules_from_file():
@@ -26,10 +22,13 @@ def load_all_rules_from_file():
 # Считываем правила из файла при каждом запуске/обновлении страницы
 RULES_TEXT = load_all_rules_from_file()
 
-# Функция прямого сетевого запроса к Google AI через правильный и стабильный REST эндпоинт
+# Функция прямого сетевого запроса к Google AI через раздельные параметры
 def ask_gemini_direct(user_question, rules, api_key):
-    # ПРАВИЛЬНЫЙ И РАБОЧИЙ URL ДЛЯ МОДЕЛИ GEMINI 2.5 FLASH ПО РЕГЛАМЕНТУ GOOGLE
-    url = f"https://googleapis.com{api_key}"
+    # Адрес строго чистый, без всяких вставок переменных внутри строки!
+    url = "https://googleapis.com"
+    
+    # Передаем ключ в специальный словарь параметров. requests сам добавит знак "?" и приклеит ключ правильно
+    query_params = {"key": api_key}
     
     system_prompt = (
         "Ты — опытный, справедливый и строгий Главный Модератор игрового сервера SCP RP.\n"
@@ -59,18 +58,18 @@ def ask_gemini_direct(user_question, rules, api_key):
     headers = {'Content-Type': 'application/json'}
     
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        # Отправляем запрос с разделением url и params
+        response = requests.post(url, headers=headers, params=query_params, data=json.dumps(payload))
         if response.status_code == 200:
             res_json = response.json()
-            # Корректное извлечение текста ответа по спецификации Google REST API
-            return res_json['candidates'][0]['content']['parts'][0]['text']
+            return res_json['candidates']['content']['parts']['text']
         else:
             return f"Ошибка сервера Google (Код {response.status_code}): {response.text}"
     except Exception as e:
         return f"Сетевой сбой подключения: {str(e)}"
 
 # Интерфейс ввода вопроса
-user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="gemini_rest_input")
+user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="gemini_rest_input_v3")
 
 if user_query:
     if RULES_TEXT:
