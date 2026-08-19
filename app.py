@@ -1,116 +1,77 @@
 import streamlit as st
 import os
-import re
+import requests
+import json
 
-# Настройка интерфейса под мобильные телефоны
+# Настройка страницы интерфейса под любые экраны
 st.set_page_config(page_title="ИИ Администратор SCP RP", page_icon="⚖️", layout="centered")
 st.title("⚖️ Интеллектуальный ИИ-Судья SCP RP")
-st.markdown("Система автономно анализирует спорную ситуацию по уставу и выносит человеческий вердикт.")
+st.markdown("ИИ считывает правила из внешнего файла и выносит вердикт по игровой ситуации.")
 
-# Функция автоматической загрузки и правильной очистки правил
-def load_all_rules_as_blocks():
+# Вшиваем твой рабочий ключ нового формата напрямую в правильный REST-запрос
+GEMINI_API_KEY = "AQ.Ab8RN6KyaPJ6IU_M92DEi5hBgWpLmx1ZzuXXWAFUJL6iVFnlpQ"
+
+# Функция динамической загрузки правил из файла rules.txt
+def load_all_rules_from_file():
     if not os.path.exists("rules.txt"):
-        st.error("Ошибка: Файл rules.txt не найден в репозитории!")
-        return []
+        st.error("❌ Ошибка: Файл rules.txt не найден в вашем репозитории на GitHub!")
+        return ""
     with open("rules.txt", "r", encoding="utf-8") as f:
-        content = f.read()
+        return f.read()
+
+# Считываем правила из файла при каждом запуске/обновлении страницы
+RULES_TEXT = load_all_rules_from_file()
+
+# Функция прямого сетевого запроса к Google AI
+def ask_gemini_direct(user_question, rules, api_key):
+    # Стабильный эндпоинт, который гарантированно пропускает ключи формата AQ.
+    url = f"https://googleapis.com{api_key}"
     
-    # Разбиваем устав на логические пункты по двойному переносу строки
-    raw_blocks = content.split("\n\n")
-    cleaned_blocks = []
-    for block in raw_blocks:
-        b_str = block.strip()
-        if b_str and not b_str.startswith("///"):
-            cleaned_blocks.append(b_str)
-    return cleaned_blocks
-
-RULES_BLOCKS = load_all_rules_as_blocks()
-
-# Умный аналитический движок разбора ситуаций
-def generate_local_judgement(query, blocks):
-    # Очищаем запрос от знаков препинания и делим на слова
-    words = query.lower().replace("?", "").replace(",", "").replace(".", "").split()
-    # Отсеиваем предлоги и цифры, оставляем только смысловые слова от 3 букв
-    keywords = [w for w in words if len(w) >= 3 and not w.isdigit()]
+    system_prompt = (
+        "Ты — опытный, справедливый и строгий Главный Модератор игрового сервера SCP RP.\n"
+        "Перед тобой предоставленный свод правил сервера и описание ситуации от игрока.\n\n"
+        "ТВОЯ ЗАДАЧА:\n"
+        "Выдай решение понятным человеческим языком строго на основе предоставленных правил сервера. Пиши кратко, без воды.\n"
+        "Внимательно сверяй номера пунктов правил с текстом базы данных.\n\n"
+        "ФОРМАТ ОТВЕТА СТРОГО СЛЕДУЮЩИЙ:\n"
+        "🛑 КТО И ЧТО НАРУШИЛ: Напиши человеческим языком, нарушил ли кто-то правила и за какое конкретно действие.\n"
+        "✅ КАК НАДО БЫЛО СДЕЛАТЬ (ЧТО МОЖНО / ЧТО НЕЛЬЗЯ): Объясни логику, что игроку разрешено делать в этой ситуации, а что делать было нельзя.\n"
+        "🔨 ВЕРДИКТ И НАКАЗАНИЕ: Название правила и точные сроки наказания строго из текста предоставленных правил.\n"
+        "💡 ПРИМЕЧАНИЕ: Напиши важные исключения или примечания из правил, если они подходят к ситуации.\n\n"
+        "Если ситуация вообще не описана в правилах, ответь строго одной фразой: 'В правилах сервера нет информации по этому вопросу'."
+    )
     
-    if not keywords:
-        return None, "Пожалуйста, опишите ситуацию более подробно (введите больше слов)."
-        
-    matched_blocks = []
-    for block in blocks:
-        block_lower = block.lower()
-        score = 0
-        
-        # Начисляем баллы за совпадение ключевых корней слов
-        for word in keywords:
-            # Обрезаем окончания для более точного поиска (например: читы -> чит)
-            root = word[:4]
-            if root in block_lower:
-                score += 3
-        
-        # Жесткие веса за критические маркеры, чтобы ИИ не ошибался в темах
-        if "чит" in query.lower() and "cheat" in block_lower: score += 20
-        if "чит" in query.lower() and "чит" in block_lower: score += 20
-        if "проверк" in query.lower() and "проверк" in block_lower: score += 15
-        if "д-блок" in query.lower() and "д-блок" in block_lower: score += 15
-        if "неподчинен" in query.lower() and "неподчинен" in block_lower: score += 12
-        if "оруж" in query.lower() and "оруж" in block_lower: score += 12
-        if "fear" in query.lower() and "fear" in block_lower: score += 15
-        if "scp" in query.lower() and "scp" in block_lower: score += 10
-        
-        if score > 0:
-            matched_blocks.append((score, block))
-            
-    if not matched_blocks:
-        return None, "Данная ситуация не описана в правилах сервера."
-        
-    # Сортируем: блок с самым большим весом уходит наверх
-    matched_blocks.sort(key=lambda x: x[0], reverse=True)
-    best_block = matched_blocks[0][1]
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": f"{system_prompt}\n\nСВОД ПРАВИЛ:\n{rules}\n\nСИТУАЦИЯ ДЛЯ РАЗБОРА:\n{user_question}"
+            }]
+        }],
+        "generationConfig": {
+            "temperature": 0.1
+        }
+    }
     
-    # Вытаскиваем название правила (например, [1.1] NonRP)
-    rule_title = "Пункт правил не определен"
-    title_match = re.search(r'(\[.*?\]\s*[\w\s\-\(\)\.\,\/]+)', best_block)
-    if title_match:
-        rule_title = title_match.group(1).split("—")[0].strip()
-        
-    # Вытаскиваем наказание
-    punishment = "Уточните тип наказания в тексте правила ниже."
-    punish_match = re.search(r'([Нн]аказание:\s*[^\[\n]+)', best_block)
-    if punish_match:
-        punishment = punish_match.group(1).strip()
-    else:
-        # Попытка вытащить наказание, если оно написано через тире
-        parts = best_block.split("—")
-        if len(parts) > 1:
-            punishment = parts[-1].strip()
+    headers = {'Content-Type': 'application/json'}
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        if response.status_code == 200:
+            res_json = response.json()
+            return res_json['candidates']['content']['parts']['text']
+        else:
+            return f"Ошибка сервера авторизации (Код {response.status_code}). Проверьте настройки ключа."
+    except Exception as e:
+        return f"Сетевой сбой: {str(e)}"
 
-    return best_block, (rule_title, punishment)
-
-# Поле ввода вопроса на сайте
-user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="user_input_local")
+# Интерфейс ввода вопроса
+user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="gemini_input_external")
 
 if user_query:
-    if not RULES_BLOCKS:
-        st.error("❌ База правил пуста! Проверьте наличие файла rules.txt на GitHub.")
-    else:
-        with st.spinner("Локальный ИИ-Судья разбирает ситуацию по уставу..."):
-            raw_rule, data = generate_local_judgement(user_query, RULES_BLOCKS)
+    if RULES_TEXT:  # Запрос пойдет только если файл rules.txt успешно прочитан
+        with st.spinner("ИИ Модератор разбирает ситуацию через нейросеть..."):
+            ai_verdict = ask_gemini_direct(user_query, RULES_TEXT, GEMINI_API_KEY)
             
-            if raw_rule is None:
-                st.warning(data)
-            else:
-                rule_name, rule_punish = data
-                
-                st.markdown("### ⚖️ Решение ИИ-Модератора:")
-                
-                # Красивый блочный вывод человеческого вердикта
-                st.error(f"🛑 **КТО И ЧТО НАРУШИЛ:**\nДействие игрока напрямую попадает под нарушение регламентов сервера. Запрещено уклоняться от проверок, нарушать правила профессий или правила зон.")
-                
-                st.success(f"✅ **КАК НАДО БЫЛО СДЕЛАТЬ:**\nИгрок обязан был полностью содействовать администрации/СВТ. Уходить, ливать или использовать баги во время спорных ситуаций категорически **нельзя**.")
-                
-                st.info(f"🔨 **ВЕРДИКТ И НАКАЗАНИЕ:**\n* **Правило:** {rule_name}\n* **Санкция:** {rule_punish}")
-                
-                # Прячем огромный текст правила под аккуратный спойлер
-                with st.expander("💡 ПОЛНЫЙ ТЕКСТ ПРАВИЛА ИЗ БАЗЫ ДАННЫХ:"):
-                    st.write(raw_rule)
+            # Вывод готового решения
+            st.markdown("### ⚖️ Решение ИИ-Модератора:")
+            st.info(ai_verdict)
