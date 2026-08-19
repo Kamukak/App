@@ -1,15 +1,16 @@
 import streamlit as st
 import os
-import requests
-import json
+from google import genai
+from google.genai import types
 
-# Настройка страницы интерфейса под любые экраны
+# Настройка страницы
 st.set_page_config(page_title="ИИ Администратор SCP RP", page_icon="⚖️", layout="centered")
 st.title("⚖️ Интеллектуальный ИИ-Судья SCP RP")
 st.markdown("ИИ считывает правила из внешнего файла и выносит вердикт по игровой ситуации.")
 
-# Вшиваем твой рабочий ключ нового формата напрямую
-GEMINI_API_KEY = "AQ.Ab8RN6KyaPJ6IU_M92DEi5hBgWpLmx1ZzuXXWAFUJL6iVFnlpQ"
+# Инициализируем клиент БЕЗ ручного указания ключа в скобках.
+# Официальный SDK сам автоматически заберет ключ из Secrets, и Google пропустит запрос!
+client = genai.Client()
 
 # Функция динамической загрузки правил из файла rules.txt
 def load_all_rules_from_file():
@@ -19,17 +20,10 @@ def load_all_rules_from_file():
     with open("rules.txt", "r", encoding="utf-8") as f:
         return f.read()
 
-# Считываем правила из файла при каждом запуске/обновлении страницы
 RULES_TEXT = load_all_rules_from_file()
 
-# Функция прямого сетевого запроса к Google AI (ИСПРАВЛЕНО И ПРОВЕРЕНО)
-def ask_gemini_direct(user_question, rules, api_key):
-    # СТРОГО ПРАВИЛЬНЫЙ ФОРМАТ ССЫЛКИ GOOGLE API
-    url = "https://googleapis.com"
-    
-    # Передаем ключ строго в параметрах запроса params, чтобы избежать склеивания доменов в requests
-    params = {"key": api_key}
-    
+# Функция запроса к ИИ через официальный безопасный метод
+def ask_gemini_safe(user_question, rules_text):
     system_prompt = (
         "Ты — опытный, справедливый и строгий Главный Модератор игрового сервера SCP RP.\n"
         "Перед тобой предоставленный свод правил сервера из файла rules.txt и описание ситуации от игрока.\n\n"
@@ -44,38 +38,27 @@ def ask_gemini_direct(user_question, rules, api_key):
         "Если ситуация вообще не описана в правилах, ответь строго одной фразой: 'В правилах сервера нет информации по этому вопросу'."
     )
     
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": f"{system_prompt}\n\nСВОД ПРАВИЛ:\n{rules}\n\nСИТУАЦИЯ ДЛЯ РАЗБОРА:\n{user_question}"
-            }]
-        }],
-        "generationConfig": {
-            "temperature": 0.1
-        }
-    }
-    
-    headers = {'Content-Type': 'application/json'}
-    
     try:
-        # Исправленный метод отправки: params разделяет домен и ключ
-        response = requests.post(url, headers=headers, params=params, data=json.dumps(payload))
-        if response.status_code == 200:
-            res_json = response.json()
-            return res_json['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"Ошибка сервера авторизации (Код {response.status_code}): {response.text}"
+        # Отправляем запрос через официальный метод
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=f"СВОД ПРАВИЛ:\n{rules_text}\n\nСИТУАЦИЯ ДЛЯ РАЗБОРА:\n{user_question}",
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.1
+            )
+        )
+        return response.text
     except Exception as e:
-        return f"Сетевой сбой: {str(e)}"
+        return f"Ошибка при запросе к Google AI: {str(e)}"
 
 # Интерфейс ввода вопроса
-user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="gemini_input_fixed_final")
+user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="gemini_final_safe_input")
 
 if user_query:
     if RULES_TEXT:
         with st.spinner("ИИ Модератор разбирает ситуацию через нейросеть..."):
-            ai_verdict = ask_gemini_direct(user_query, RULES_TEXT, GEMINI_API_KEY)
+            ai_verdict = ask_gemini_safe(user_query, RULES_TEXT)
             
-            # Вывод готового решения
             st.markdown("### ⚖️ Решение ИИ-Модератора:")
             st.info(ai_verdict)
