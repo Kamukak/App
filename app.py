@@ -8,11 +8,11 @@ st.set_page_config(page_title="ИИ Администратор SCP RP", page_ico
 st.title("⚖️ Интеллектуальный ИИ-Судья SCP RP")
 st.markdown("ИИ анализирует игровую ситуацию, выносит вердикт и объясняет, кто прав, а кто виноват.")
 
-# Твой рабочий ключ нового формата
-GEMINI_API_KEY = "AQ.Ab8RN6KyaPJ6IU_M92DEi5hBgWpLmx1ZzuXXWAFUJL6iVFnlpQ"
+# Подтягиваем ключ из безопасного хранилища Secrets
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
-# Инициализируем официальный клиент Google GenAI нового поколения
-client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+# Инициализируем официальный клиент Google GenAI
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Функция загрузки правил целиком
 def load_all_rules():
@@ -24,7 +24,7 @@ def load_all_rules():
 
 ALL_RULES = load_all_rules()
 
-# Функция запроса к ИИ через официальный безопасный метод
+# Функция запроса к ИИ
 def ask_gemini_safe(user_question, rules_text):
     system_prompt = (
         "Ты — опытный, справедливый и строгий Главный Модератор игрового сервера SCP RP.\n"
@@ -40,9 +40,8 @@ def ask_gemini_safe(user_question, rules_text):
     )
     
     try:
-        # Используем современный метод generate_content с конфигурацией системы
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
+            model='gemini-2.5-flash',
             contents=f"ПОЛНЫЙ СВОД ПРАВИЛ:\n{rules_text}\n\nВОПРОС/СИТУАЦИЯ:\n{user_question}",
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -58,7 +57,7 @@ user_query = st.text_input("Опишите спорную ситуацию на 
 
 if user_query:
     if not ALL_RULES:
-        st.error("❌ Файл rules.txt пуст или отсутствует в папке 'Scp Ai'.")
+        st.error("❌ Файл rules.txt пуст или отсутствует в репозитории.")
     else:
         with st.spinner("ИИ Модератор разбирает ситуацию..."):
             ai_verdict = ask_gemini_safe(user_query, ALL_RULES)
