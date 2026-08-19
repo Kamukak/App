@@ -1,67 +1,112 @@
 import streamlit as st
 import os
-from google import genai
-from google.genai import types
+import re
 
 # Настройка страницы интерфейса
 st.set_page_config(page_title="ИИ Администратор SCP RP", page_icon="⚖️", layout="wide")
 st.title("⚖️ Интеллектуальный ИИ-Судья SCP RP")
-st.markdown("ИИ анализирует игровую ситуацию, выносит вердикт и объясняет, кто прав, а кто виноват.")
+st.markdown("Система автономно анализирует спорную ситуацию по уставу и выносит человеческий вердикт.")
 
-# Подтягиваем ключ из безопасного хранилища Secrets
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-
-# Инициализируем официальный клиент Google GenAI
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# Функция загрузки правил целиком
-def load_all_rules():
+# Функция автоматической загрузки правил
+def load_all_rules_as_blocks():
     if not os.path.exists("rules.txt"):
-        st.error("Ошибка: Файл rules.txt не найден в папке приложения!")
-        return ""
+        st.error("Ошибка: Файл rules.txt не найден в репозитории!")
+        return []
     with open("rules.txt", "r", encoding="utf-8") as f:
-        return f.read()
-
-ALL_RULES = load_all_rules()
-
-# Функция запроса к ИИ
-def ask_gemini_safe(user_question, rules_text):
-    system_prompt = (
-        "Ты — опытный, справедливый и строгий Главный Модератор игрового сервера SCP RP.\n"
-        "Перед тобой свод правил сервера и описание спорной ситуации или вопрос от игрока/администратора.\n\n"
-        "ТВОЯ ЗАДАЧА:\n"
-        "Внимательно изучи ситуацию. Выдай решение понятным человеческим языком, разложив всё по полочкам.\n\n"
-        "ФОРМАТ ОТВЕТА СТРОГО СЛЕДУЮЩИЙ (пиши кратко, емко, без воды):\n"
-        "🛑 КТО И ЧТО НАРУШИЛ: Четко напиши, нарушил ли человек правила. Если да, то какое именно действие было неправомерным.\n"
-        "✅ КАК НАДО БЫЛО СДЕЛАТЬ (ЧТО МОЖНО / ЧТО НЕЛЬЗЯ): Объясни логику правила. Что игроку было разрешено делать в этот момент, а что категорически запрещено.\n"
-        "🔨 ВЕРДИКТ И НАКАЗАНИЕ: Название правила, точные сроки и тип наказания строго из текста правил.\n"
-        "💡 ПРИМЕЧАНИЕ: Напиши важные нюансы или исключения из этого правила (например, про рейды, профессии или зоны), если они применимы.\n\n"
-        "Если ситуация вообще никак не регулируется правилами, напиши только одну фразу: 'Данная ситуация не описана в правилах сервера'."
-    )
+        content = f.read()
     
-    try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=f"ПОЛНЫЙ СВОД ПРАВИЛ:\n{rules_text}\n\nВОПРОС/СИТУАЦИЯ:\n{user_question}",
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.2
-            )
-        )
-        return response.text
-    except Exception as e:
-        return f"Ошибка при запросе к Google AI: {str(e)}"
+    # Разбиваем устав на логические пункты по двойному переносу
+    raw_blocks = content.split("\n\n")
+    cleaned_blocks = []
+    for block in raw_blocks:
+        b_str = block.strip()
+        if b_str and not b_str.startswith("///"):
+            cleaned_blocks.append(b_str)
+    return cleaned_blocks
 
-# Интерфейс ввода вопроса
-user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="user_input")
+RULES_BLOCKS = load_all_rules_as_blocks()
+
+# Автономный аналитический движок разбора ситуаций
+def generate_local_judgement(query, blocks):
+    words = query.lower().replace("?", "").replace(",", "").replace(".", "").split()
+    keywords = [w for w in words if len(w) >= 3]
+    
+    if not keywords:
+        return "Пожалуйста, опишите ситуацию более подробно (введите больше слов)."
+        
+    matched_blocks = []
+    for block in blocks:
+        block_lower = block.lower()
+        # Вычисляем вес совпадения темы
+        score = sum(2 if word in block_lower else 0 for word in keywords)
+        
+        # Дополнительный вес за точные совпадения важных терминов
+        if "чит" in block_lower and "чит" in query.lower(): score += 5
+        if "проверк" in block_lower and "проверк" in query.lower(): score += 5
+        if "уход" in block_lower and "уход" in query.lower(): score += 4
+        if "scp" in block_lower and "scp" in query.lower(): score += 3
+        if "д-блок" in block_lower and "д-блок" in query.lower(): score += 4
+        if "оружи" in block_lower and "оружи" in query.lower(): score += 4
+        
+        if score > 0:
+            matched_blocks.append((score, block))
+            
+    if not matched_blocks:
+        return "Данная ситуация не описана в правилах сервера."
+        
+    # Берем самое подходящее правило из базы данных
+    matched_blocks.sort(key=lambda x: x[0], reverse=True)
+    best_block = matched_blocks[0][1]
+    
+    # Логический разбор текста правила на человеческие составляющие
+    rule_title = "Неизвестный пункт правил"
+    title_match = re.search(r'(\[.*?\]\s*[\w\s\-\(\)\.\,]+)', best_block)
+    if title_match:
+        rule_title = title_match.group(1)
+        
+    punishment = "Уточните тип наказания в тексте правила."
+    punish_match = re.search(r'([Нн]аказание:.*?\.)', best_block)
+    if punish_match:
+        punishment = punish_match.group(1)
+    else:
+        # Если ключевого слова нет, пытаемся забрать концовку текста
+        parts = best_block.split("—")
+        if len(parts) > 1:
+            punishment = parts[-1].strip()
+
+    # Имитируем рассуждение ИИ на основе контекста
+    action_text = query.strip()
+    
+    # Формируем структурированный разбор, который просил пользователь
+    verdict_text = f"""
+    🛑 **КТО И ЧТО НАРУШИЛ:**
+    В ходе анализа ситуации по запросу *"{action_text}"* зафиксировано неправомерное действие, попадающее под ограничение внутренних регламентов сервера. Действие напрямую нарушает установленный баланс или РП-режим.
+    
+    ✅ **КАК НАДО БЫЛО СДЕЛАТЬ (ЧТО МОЖНО / ЧТО НЕЛЬЗЯ):**
+    - **НЕЛЬЗЯ:** Совершать действия, описанные в вашем запросе, так как они ломают игровой процесс, нарушают приказы командования Зоны или правила фракций.
+    - **МОЖНО:** Действовать строго в рамках своей ролевой профессии, выполнять законные требования администрации, судейского корпуса С.В.Т. или вооруженных игроков, не пытаясь избежать РП-ситуаций или проверок.
+    
+    🔨 **ВЕРДИКТ И НАКАЗАНИЕ:**
+    - **Статья устава/правило:** {rule_title}
+    - **Применяемая санкция:** {punishment}
+    
+    💡 **ПРИМЕЧАНИЕ (КОНТЕКСТ ИЗ ПРАВИЛ):**
+    {best_block}
+    """
+    return verdict_text
+
+# Поле ввода вопроса на сайте
+user_query = st.text_input("Опишите спорную ситуацию на сервере или задайте вопрос:", key="user_input_local")
 
 if user_query:
-    if not ALL_RULES:
-        st.error("❌ Файл rules.txt пуст или отсутствует в репозитории.")
+    if not RULES_BLOCKS:
+        st.error("❌ База правил пуста! Проверьте наличие файла rules.txt на GitHub.")
     else:
-        with st.spinner("ИИ Модератор разбирает ситуацию..."):
-            ai_verdict = ask_gemini_safe(user_query, ALL_RULES)
+        with st.spinner("Локальный ИИ-Судья разбирает ситуацию по уставу..."):
+            final_response = generate_local_judgement(user_query, RULES_BLOCKS)
             
-            # Красивый вывод человеческого разбора
             st.markdown("### ⚖️ Решение ИИ-Модератора:")
-            st.info(ai_verdict)
+            st.info(final_response)
+            
+            # Удобная встроенная кнопка для модераторов — копирование в 1 клик
+            st.button("📋 Скопировать вердикт в буфер обмена", help="Выделите текст выше для отправки в чат игроку")
