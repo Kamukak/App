@@ -12,7 +12,7 @@ st.markdown("ИИ анализирует игровую ситуацию, вын
 GEMINI_API_KEY = "AQ.Ab8RN6KyaPJ6IU_M92DEi5hBgWpLmx1ZzuXXWAFUJL6iVFnlpQ"
 
 # Инициализируем официальный клиент Google GenAI нового поколения
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # Функция загрузки правил целиком
 def load_all_rules():
